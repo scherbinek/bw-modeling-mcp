@@ -1,6 +1,6 @@
 # Central Hosting Setup Guide — SAP BTP Cloud Foundry
 
-This is a **step-by-step walkthrough** for hosting the BW Modeling MCP server centrally on
+This is a **step-by-step walkthrough** for hosting the BW MCP Analyst server centrally on
 SAP Business Technology Platform (BTP), so a whole team can share one deployment behind
 OAuth instead of everyone running it locally. Follow it top to bottom the first time.
 
@@ -27,12 +27,12 @@ depth; it does not repeat it.
   Cloud Connector  (in the customer network)
         │  HTTPS
         ▼
-  SAP BW/4HANA  (on-premise ABAP system)
+  SAP BW/4HANA  (on-premise ABAP system, SAP Gateway OData)
 ```
 
 - The **Cloud Connector** is the secure tunnel between BTP and the on-premise BW system.
 - The **Destination** tells the app how to reach BW through that tunnel.
-- **XSUAA** provides login and role-based access (Reader vs. Developer).
+- **XSUAA** provides login and the role collection **BW MCP Analyst**.
 - The app itself is stateless; identity arrives with each request.
 
 Two authentication topologies are possible — start with the simpler one:
@@ -56,11 +56,33 @@ reference for the internals and environment variables.
 - [ ] BTP entitlements/quota for the services: **Authorization & Trust Management (XSUAA)**,
       **Destination**, and **Connectivity**.
 - [ ] Admin rights in the subaccount to create destinations and assign role collections.
-- [ ] A reachable **SAP BW/4HANA** system and a **Cloud Connector** you may configure.
+- [ ] A reachable **SAP BW/4HANA** (or BW 7.5 on HANA) system and a **Cloud Connector** you may configure.
+- [ ] The BW queries to be read are **released as OData services** and active in SAP Gateway
+      — see [Step 0](#step-0--release-the-bw-queries-as-odata-services).
 - [ ] A **technical BW user** (for Stage 1) with the authorizations the team needs.
 - [ ] Local tooling: **Node.js** (LTS), the **Cloud Foundry CLI** (`cf`), and the
       **BTP CLI** (`btp`). Install steps are in [Step 3](#step-3--install-and-log-in-with-the-cli).
 - [ ] A clone of this repository.
+
+---
+
+## Step 0 — Release the BW queries as OData services
+
+The server reads nothing but OData services, so every query it should find has to be one.
+
+1. In the BW Modeling Tools (Eclipse), open the query, and on the **General** tab under
+   **Releasing For** tick **By OData**. Save and activate. (On BW 7.5 the same flag is in
+   the BEx Query Designer, **Properties → Advanced → By OData**.) BW generates the service
+   `<QUERY>_SRV`.
+2. Transaction **/IWFND/MAINT_SERVICE** → **Add Service**, system alias of the BW system
+   (`LOCAL` for embedded Gateway), search for `<QUERY>_SRV` and add it. The ICF node is
+   activated with it.
+3. The catalog service **`/IWFND/CATALOGSERVICE`** (version 2) must be active as well —
+   `bw_find_queries` reads it. It usually is.
+4. Users (or the technical user in Stage 1) need:
+   - **S_SERVICE** for the query services and the catalog service (e.g. via a role built in
+     PFCG from the service entries),
+   - **analysis authorizations** for the data in the queries, exactly as for any other front end.
 
 ---
 
@@ -79,14 +101,10 @@ the BTP subaccount.
    - Protocol: **HTTPS** (the connector reaches BW over HTTPS).
    - Internal host/port: the BW system's host and HTTPS port (e.g. `44300`).
    - Virtual host/port: a name the destination will use (e.g. `bw4.virtual:44300`).
-4. **Expose the resources** the MCP server needs — this is a separate action from the
-   mapping and is easily missed. Add each of these with **Path and all sub-paths**:
-   - `/sap/bw/modeling`
-   - `/sap/bw4`
-   - `/sap/bc/http/sap/bw4`
-   - `/sap/opu/odata/sap`
-   - `/sap/bc/adt` — required on classic BW (7.5): the metadata-table reads
-     (`bw_read_metadata_tables`, parts of `bw_xref`) go through the ADT DataPreview service
+4. **Expose the resource** the MCP server needs — this is a separate action from the
+   mapping and is easily missed. Add `/sap/opu/odata` with **Path and all sub-paths**. It
+   covers the query services (`/sap/opu/odata/sap/…`) and the Gateway catalog
+   (`/sap/opu/odata/IWFND/…`) alike.
 5. Check the mapping status is green (**Reachable**).
 
 > For principal propagation (Stage 2) the Cloud Connector needs additional certificate
@@ -202,27 +220,22 @@ The MCP endpoint is that route plus `/mcp`.
 
 ## Step 7 — Assign roles to users
 
-Three role collections ship in `xs-security.json`:
+One role collection ships in `xs-security.json`: **BW MCP Analyst**. It grants the three
+tools — find BW queries, read their definition, read their result. Nothing can be changed
+or run.
 
-| Collection | Grants |
-|---|---|
-| **BW MCP Reader** | everything that only reads, query data included |
-| **BW MCP Analyst** | reporting only — a 14-tool client for business users |
-| **BW MCP Developer** | all tools, including create/change/delete/activate |
-
-Assign a collection to each user — in the BTP Cockpit (**Security → Users → Role Collection
+Assign it to each user — in the BTP Cockpit (**Security → Users → Role Collection
 Assignment**) or via the CLI:
 
 ```bash
-btp assign security/role-collection "BW MCP Developer" --to-user <email> --of-idp <idp>
+btp assign security/role-collection "BW MCP Analyst" --to-user <email> --of-idp <idp>
 ```
 
 > **Use the identity provider the app actually logs in through.** On a subaccount with a
 > custom IAS tenant that is `sap.custom`, not `sap.default`. The wrong one fails at login
 > with `invalid_scope` and no other clue.
 
-Readers do not merely get errors from write tools — those tools are filtered out of the
-tool list entirely. See [`CLOUD-FOUNDRY.md` §1](./CLOUD-FOUNDRY.md#1-roles).
+A user without it is refused at `/mcp`. See [`CLOUD-FOUNDRY.md` §1](./CLOUD-FOUNDRY.md#1-roles).
 
 ---
 
@@ -420,7 +433,7 @@ immediately without any restart.
 
 ### PP-8 — Verify, and how to read the ICM trace
 
-Call a read tool from the MCP client (e.g. list source systems). Success = data instead of
+Call a tool from the MCP client (e.g. ask it to find the BW queries). Success = data instead of
 `401`. Because the server fails closed (PP client only, no shared fallback), a successful
 call **proves** the request ran as the individual user.
 

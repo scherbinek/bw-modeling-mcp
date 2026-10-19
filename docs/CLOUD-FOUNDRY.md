@@ -24,29 +24,30 @@ Pick by how you configure the BTP destination:
 | Setup effort | destination only | Cloud Connector certificates + ABAP CERTRULE + ICM trust |
 
 Start with the shared user to get the deployment working, then switch on principal
-propagation. Both use the same image and the same role collections.
+propagation. Both use the same image and the same role collection.
 
 ## 1. Roles
 
-Three role collections ship in `xs-security.json`:
+One role collection ships in `xs-security.json`:
 
 | Collection | Scope | Gets |
 |---|---|---|
-| **BW MCP Reader** | `read` | the 45 read tools — modelling objects, flows, routines, monitoring and query data |
-| **BW MCP Analyst** | `analyst` | 14 reporting tools: run a query or a provider, and find and understand what to run. A subset of `read`, meant as a small client for business users rather than as a narrower permission |
-| **BW MCP Developer** | `read` + `analyst` + `write` | all 83 |
+| **BW MCP Analyst** | `analyst` | `bw_find_queries`, `bw_describe_query`, `bw_read_query` |
 
-A reader does not merely get errors from the write tools — they are filtered out of
-`tools/list`, so the model never proposes a call that will be denied.
-
-The split follows the HTTP verb each tool actually uses, not its name: `bw_query_data`
-and `bw_preview_datasource` issue POSTs but only read, while `bw_unlock` sounds harmless
-and mutates lock state. Anything not on the read list requires `write`, so a tool added
-later is unavailable to readers until it is classified.
+A token without the `analyst` scope is refused at `/mcp`. The tools are listed in
+`src/scopes.ts` explicitly; a tool added later without being listed there is refused, so
+the surface never widens by accident. Every request the server sends to BW is a GET to
+SAP Gateway OData.
 
 Under principal propagation the scope is only the first gate — BW still applies the
-caller's own authorizations. Under a shared technical user the scope is the *only*
-per-user control, which is worth weighing when handing out **BW MCP Developer**.
+caller's own authorizations (S_SERVICE for the Gateway service, analysis authorizations
+for the data). Under a shared technical user the scope is the *only* per-user control,
+and every user sees what the technical user may see.
+
+> **Upgrading from v1.x** (Reader / Analyst / Developer): run
+> `cf update-service bwmcp-xsuaa -c xs-security.json`. The `read` and `write` scopes and
+> the Reader and Developer collections are removed. Users who held only those need
+> **BW MCP Analyst** assigned.
 
 ## 2. Deploy
 
@@ -60,7 +61,7 @@ cf push                      # set BW_BTP_DESTINATION and BW_CLIENT in manifest.
 ```
 
 ```bash
-btp assign security/role-collection "BW MCP Developer" --to-user <email> --of-idp <idp>
+btp assign security/role-collection "BW MCP Analyst" --to-user <email> --of-idp <idp>
 ```
 
 Use the identity provider the application actually logs in through — on a subaccount with
@@ -95,12 +96,9 @@ MCP client --XSUAA JWT--> this app --X-User-Token--> Destination service
    provider **Trusted**. That list is empty by default.
 6. **Access control entry**: Protocol HTTPS, *Allow Principal Propagation* ✓, Principal
    Type **X.509 Certificate**.
-7. **Expose the resources** — a step separate from the system mapping, and easily missed:
-   `/sap/bw/modeling`, `/sap/bw4`, `/sap/bc/http/sap/bw4`, `/sap/opu/odata/sap` and
-   `/sap/bc/adt`, each with *Path and all sub-paths*. A mapping created earlier for ADT
-   exposes only `/sap/bc/adt`. On classic BW (7.5) `/sap/bc/adt` is required: the
-   metadata-table reads (`bw_read_metadata_tables`, parts of `bw_xref`) go through the ADT
-   DataPreview service.
+7. **Expose the resource** — a step separate from the system mapping, and easily missed:
+   `/sap/opu/odata` with *Path and all sub-paths*. It covers the query services and the
+   Gateway catalog service.
 
 **ABAP**
 
@@ -117,7 +115,7 @@ MCP client --XSUAA JWT--> this app --X-User-Token--> Destination service
 12. **CERTRULE** → import the sample certificate, create the rule. It is
     **client-dependent**. Map to **Alias** or **E-Mail**, never **User Name** — ABAP user
     names are 12 characters and BTP identities are email addresses.
-13. **SICF** → the BW paths must allow *Logon Through SSL Certificate*.
+13. **SICF** → the OData nodes below `/sap/opu/odata` must allow *Logon Through SSL Certificate*.
 14. **SMICM** → Administration → ICM → Exit Hard → Global.
 
 SNC is not involved — that is the RFC propagation path, not HTTPS.
@@ -146,6 +144,8 @@ SNC is not involved — that is the RFC propagation path, not HTTPS.
 | `502 Could not connect to BW` | destination lookup or propagation failed | the message says which; check the destination name and binding |
 | 401 + basic-auth popup; ICM trace `intermediary is NOT trusted` | ICM stripped `SSL_CLIENT_CERT` | step 9 — missing, mistyped, lowercase keyword, wrong spacing, or both variants set |
 | `403 Access denied to resource … expose the resource correctly in your cloud connector` | path not exposed | step 7 — a Cloud Connector message, not an authorization failure |
+| `HTTP 404 … not active or not registered` on a query | the query is not released "By OData", or its `<QUERY>_SRV` is not added in `/IWFND/MAINT_SERVICE` | [setup step 0](./CENTRAL-HOSTING-SETUP.md#step-0--release-the-bw-queries-as-odata-services) |
+| `HTTP 403` from Gateway on a query or the catalog | the BW user lacks `S_SERVICE` for that service | add the service to a PFCG role of the user |
 | `invalid_scope` at login, message `<xsappname>.<scope> is invalid` | the XSUAA instance predates a scope the app advertises — `xs-security.json` changed, the instance was not updated | `cf update-service bwmcp-xsuaa -c xs-security.json`, then log in again |
 | `Malformed redirect URIs detected … [vscode://…, cursor://…]` on `create-service` / `update-service` | an older copy of `xs-security.json` lists IDE schemes, which XSUAA rejects as a whole | remove both entries and run the command again. They are not needed: XSUAA only ever redirects to this server's own `/oauth/callback`, which then forwards to the client |
 | `invalid_scope` at login, no scope named | role collection assigned under the wrong identity provider | re-assign with the right `--of-idp` |
@@ -168,7 +168,6 @@ KBA **3361376259** (propagation over HTTPS), **3367280** (401 / credential popup
 | `BW_TRUST_PROXY_HOPS` | proxy hops trusted for the client address the OAuth rate limits key on; default `2` on Cloud Foundry (load balancer and CF router), `0` elsewhere. Raise it only for a further proxy that overwrites `X-Forwarded-For` — a value too high lets a client choose its own address |
 | `BW_MCP_SERVER_NAME` | server name in the MCP handshake (default `bw-modeling-mcp`); make it unique per instance |
 | `BW_MCP_SYSTEM_LABEL` | free-text system label (e.g. `AP4 (BW production, read-only)`) shown at the top of the server instructions |
-| `BW_PLATFORM` | `auto` (default), `classic`, `bw4` — platform detection for the tool surface; `classic` forces the classic verdict, `bw4` turns the filter off |
 
 With `BW_PP_ENABLED=true` the server refuses to start if `BW_USER`, `BW_PASSWORD` or
 `BW_COOKIE_FILE` is also set: BW ties a session to whoever opened it, so one leftover

@@ -107,10 +107,6 @@ export async function createPrincipalPropagationClient(
     ...baseOptions(destination),
     auth: { kind: 'pp', connectivityAuth },
     proxy: await resolveProxy(destination, deps),
-    // The connectivity token is minted per request, so it cannot identify the caller
-    // across requests. Without a stable identity the lock registry could never match a
-    // lock to the session that holds it.
-    identity: userLabel(authInfo),
   });
 }
 

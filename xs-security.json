@@ -1,44 +1,22 @@
 {
   "xsappname": "bwmcp",
   "tenant-mode": "dedicated",
-  "description": "SAP BW Modeling MCP server",
+  "description": "SAP BW MCP Analyst — read-only access to BW queries via OData",
   "scopes": [
-    { "name": "$XSAPPNAME.read",    "description": "Read BW modelling objects and query data" },
-    { "name": "$XSAPPNAME.analyst", "description": "Reporting only: run queries and read the data behind them (a subset of read)" },
-    { "name": "$XSAPPNAME.write",   "description": "Create, change, delete and activate BW objects (implies read and analyst)" }
+    { "name": "$XSAPPNAME.analyst", "description": "Find BW queries released as OData services and read their definition and result" }
   ],
   "role-templates": [
     {
-      "name": "BWReader",
-      "description": "Read-only access to BW modeling objects via MCP",
-      "scope-references": ["$XSAPPNAME.read"]
-    },
-    {
       "name": "BWAnalyst",
-      "description": "Run BW queries and read the data behind them via MCP",
+      "description": "Find and read BW queries via OData through MCP",
       "scope-references": ["$XSAPPNAME.analyst"]
-    },
-    {
-      "name": "BWDeveloper",
-      "description": "Full read and write access to BW modeling objects via MCP",
-      "scope-references": ["$XSAPPNAME.read", "$XSAPPNAME.analyst", "$XSAPPNAME.write"]
     }
   ],
   "role-collections": [
     {
-      "name": "BW MCP Reader",
-      "description": "Read BW modelling objects and query data via MCP. Write tools are not offered.",
-      "role-template-references": ["$XSAPPNAME.BWReader"]
-    },
-    {
       "name": "BW MCP Analyst",
-      "description": "Ask questions of BW data: run queries, read the values behind them. A small client — the modelling tools are not offered.",
+      "description": "Find BW queries released as OData services and read their definition and result via MCP. Nothing can be changed or run.",
       "role-template-references": ["$XSAPPNAME.BWAnalyst"]
-    },
-    {
-      "name": "BW MCP Developer",
-      "description": "Read and change BW modeling objects via MCP",
-      "role-template-references": ["$XSAPPNAME.BWDeveloper"]
     }
   ],
   "oauth2-configuration": {

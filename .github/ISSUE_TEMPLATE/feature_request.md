@@ -1,13 +1,13 @@
 ---
 name: Feature Request
-about: Suggest a new tool or operation
+about: Suggest an improvement
 title: '[FEATURE] '
 labels: enhancement
 assignees: dnic-dev
 ---
 
-**What BW object or operation is missing?**
-e.g. "CompositeProvider creation" or "Process Chain support"
+**What is missing when finding or reading BW queries?**
+e.g. "value help for query variables"
 
 **Describe the use case**
 Why would this be useful? What problem does it solve?

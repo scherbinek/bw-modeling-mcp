@@ -9,8 +9,8 @@ assignees: dnic-dev
 **What happened?**
 A clear description of the bug.
 
-**BW object type and tool**
-Which tool were you using? (e.g. `bw_create_adso`, `bw_create_transformation`)
+**Tool and query**
+Which tool were you using (`bw_find_queries`, `bw_describe_query`, `bw_read_query`) and on which query service?
 
 **Steps to reproduce**
 1. 
@@ -21,8 +21,9 @@ Which tool were you using? (e.g. `bw_create_adso`, `bw_create_transformation`)
 What did you expect to happen?
 
 **System information**
-- SAP BW version: (BW/4HANA 2.0 / 2021 / 2023)
-- Claude client: (Claude Desktop / Claude Code)
+- SAP BW version: (BW/4HANA 2.0 / 2021 / 2023, BW 7.5)
+- Running: (stdio / SAP BTP Cloud Foundry, shared user or principal propagation)
+- MCP client:
 - Node.js version:
 
 **Additional context**

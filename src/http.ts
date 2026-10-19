@@ -4,8 +4,8 @@
  *
  * Adds an authenticated, multi-user front end to the same tools stdio exposes:
  *
- *   XSUAA decides who may call this server, and whether they may write
- *     (`read` / `analyst` / `write` scopes, mapped to three role collections).
+ *   XSUAA decides who may call this server (the `analyst` scope, granted by the role
+ *     collection "BW MCP Analyst").
  *   The BTP destination decides who they are to BW. With
  *     Authentication=PrincipalPropagation each caller reaches BW as themselves and
  *     BW applies their own authorizations; with BasicAuthentication everyone shares
@@ -19,7 +19,6 @@ import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
 import { setupHttpAuth, loadXsuaaCredentials, resolveAppUrl } from '@arc-mcp/xsuaa-auth';
 import { createConnectivityProxy, parseVCAPServices } from '@arc-mcp/xsuaa-auth/btp';
 import { createServer } from './index.js';
-import { ensurePlatform } from './platform.js';
 import { trustedProxyHops } from './proxy-trust.js';
 import { runWithClient } from './request-context.js';
 import { SCOPES, hasScope } from './scopes.js';
@@ -83,19 +82,16 @@ async function main(): Promise<void> {
         credentials: loadXsuaaCredentials(),
         appUrl: resolveAppUrl(process.env, { publicUrlEnvVar: 'BW_PUBLIC_URL', port }),
         clientIdPrefix: 'bwmcp-',
-        resourceName: 'SAP BW Modeling MCP',
+        resourceName: 'SAP BW MCP Analyst',
         // Advertised as `scopes_supported` in the OAuth metadata. Without it a client
         // requests no scopes; XSUAA still grants them, and Copilot's older auth code
         // then falls back to the JWT `scope` claim — an array on XSUAA — and crashes
         // with `scope.split is not a function` (fixed upstream in vscode#325344, but
         // the Eclipse Language Server lags behind). Also narrows the verifier's
-        // accepted scopes from the arc-1 default set to the three this server defines.
+        // accepted scopes from the arc-1 default set to the one this server defines.
         //
-        // No `requiredScopes`: the middleware names them in the `scope` of its 401
-        // challenge, and an MCP client requests the challenge's scope in preference to
-        // `scopes_supported` — `['read']` there meant every token held `read` alone, so no
-        // write tool was ever offered, and an analyst-only caller was refused outright.
-        // Holding at least one of the three is checked on `/mcp` instead.
+        // No `requiredScopes`: holding the scope is checked on `/mcp` instead, where the
+        // refusal can name the role collection that grants it.
         scopesSupported: [...SCOPES],
         // A dynamically registered client_id never expires by age. Copilot Studio caches
         // its client_id and does not register again when it is refused, so the default
@@ -122,7 +118,7 @@ async function main(): Promise<void> {
         jsonrpc: '2.0',
         error: {
           code: -32000,
-          message: 'The token holds none of the scopes of this server: assign one of its role collections.',
+          message: 'The token does not hold the analyst scope: assign the role collection "BW MCP Analyst".',
         },
         id: null,
       });
@@ -145,11 +141,6 @@ async function main(): Promise<void> {
       });
       return;
     }
-
-    // Detect the platform before the server is built: createServer() puts the platform
-    // paragraph into the instructions from the cached verdict and cannot await anything
-    // itself. Cached process-wide after the first request, and it never rejects.
-    await ensurePlatform(client);
 
     // Stateless: a fresh Server and transport per request. The SDK binds a Server to one
     // transport for its lifetime, so a shared instance fails after the first call. Per
